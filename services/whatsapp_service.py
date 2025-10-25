@@ -1,0 +1,171 @@
+import requests
+import json
+from typing import Dict, Any, Optional
+from loguru import logger
+
+class WhatsAppService:
+    """
+    Service to handle all WhatsApp Business API operations
+    """
+    
+    def __init__(self):
+        self.base_url = "https://graph.facebook.com/v18.0"
+        logger.info("WhatsApp Service initialized")
+    
+    async def send_text_message(
+        self, 
+        phone_number_id: str,
+        access_token: str,
+        to_number: str, 
+        message: str
+    ) -> Dict[str, Any]:
+        """
+        Send a text message via WhatsApp Business API
+        """
+        logger.info(f"📤 Sending message to {to_number}")
+        
+        # Format phone number (remove any spaces/special characters)
+        to_number = ''.join(filter(str.isdigit, to_number))
+        
+        # Prepare the message payload
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to_number,
+            "type": "text",
+            "text": {
+                "body": message
+            }
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        url = f"{self.base_url}/{phone_number_id}/messages"
+        
+        try:
+            logger.info(f"🔗 Calling WhatsApp API: {url}")
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                message_id = result.get("messages", [{}])[0].get("id")
+                logger.success(f"✅ Message sent successfully! ID: {message_id}")
+                return {
+                    "success": True,
+                    "message_id": message_id,
+                    "wamid": message_id,
+                    "status": "sent"
+                }
+            else:
+                error_msg = f"WhatsApp API error: {response.status_code} - {response.text}"
+                logger.error(f"❌ {error_msg}")
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "status": "failed"
+                }
+                
+        except Exception as e:
+            error_msg = f"Failed to send message: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "status": "failed"
+            }
+    
+    async def send_template_message(
+        self,
+        phone_number_id: str,
+        access_token: str,
+        to_number: str,
+        template_name: str,
+        language_code: str = "en"
+    ) -> Dict[str, Any]:
+        """
+        Send a template message (for approved templates)
+        """
+        logger.info(f"📤 Sending template '{template_name}' to {to_number}")
+        
+        to_number = ''.join(filter(str.isdigit, to_number))
+        
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to_number,
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {
+                    "code": language_code
+                }
+            }
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        url = f"{self.base_url}/{phone_number_id}/messages"
+        
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            result = response.json()
+            message_id = result.get("messages", [{}])[0].get("id")
+            logger.success(f"✅ Template message sent! ID: {message_id}")
+            
+            return {
+                "success": True,
+                "message_id": message_id,
+                "wamid": message_id,
+                "status": "sent"
+            }
+            
+        except Exception as e:
+            error_msg = f"Failed to send template: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "status": "failed"
+            }
+    
+    async def mark_message_as_read(
+        self,
+        phone_number_id: str,
+        access_token: str,
+        message_id: str
+    ) -> bool:
+        """
+        Mark a message as read
+        """
+        try:
+            payload = {
+                "messaging_product": "whatsapp",
+                "status": "read",
+                "message_id": message_id
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+            
+            url = f"{self.base_url}/{phone_number_id}/messages"
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            logger.info(f"✅ Message {message_id} marked as read")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to mark message as read: {e}")
+            return False
+
+# Create a global instance
+whatsapp_service = WhatsAppService()
