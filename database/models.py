@@ -165,6 +165,58 @@ class RateLimitLog(Base):
     
     tenant = relationship("Tenant", back_populates="rate_limit_logs")
 
+# In database/models.py
+class MessageTemplate(Base):
+    __tablename__ = "message_templates"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False)
+    name = Column(String)  # order_confirmation
+    category = Column(String)  # UTILITY, MARKETING, etc.
+    language = Column(String, default="en")
+    header = Column(Text)
+    body = Column(Text)
+    footer = Column(Text)
+    buttons = Column(JSON)  # Store button config
+    status = Column(String)  # PENDING, APPROVED, REJECTED
+    meta_template_id = Column(String)  # Meta's template ID
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ScheduledMessage(Base):
+    __tablename__ = "scheduled_messages"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False)
+    whatsapp_account_id = Column(String, ForeignKey("whatsapp_accounts.id"))
+    
+    # Message details
+    to_number = Column(String(20), nullable=False)
+    message = Column(Text, nullable=False)
+    message_type = Column(String(20), default="text")
+    
+    # Scheduling
+    scheduled_at = Column(DateTime, nullable=False)  # When to send
+    timezone = Column(String(50), default="UTC")
+    
+    # Status tracking
+    status = Column(String(20), default="scheduled")  # scheduled, processing, sent, failed, cancelled
+    sent_at = Column(DateTime)  # When actually sent
+    attempts = Column(Integer, default=0)
+    max_attempts = Column(Integer, default=3)
+    
+    # Error handling
+    error_message = Column(Text)
+    last_attempt_at = Column(DateTime)
+    
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    tenant = relationship("Tenant")
+    whatsapp_account = relationship("WhatsAppAccount")
+
 # -----------------------------
 # WEBHOOK DELIVERY LOG MODEL
 # -----------------------------

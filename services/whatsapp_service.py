@@ -1,5 +1,6 @@
 import requests
 import json
+import asyncio
 from typing import Dict, Any, Optional
 from loguru import logger
 
@@ -12,20 +13,71 @@ class WhatsAppService:
         self.base_url = "https://graph.facebook.com/v18.0"
         logger.info("WhatsApp Service initialized")
     
+    async def send_message(
+        self, 
+        to: str,
+        message: str,
+        message_type: str = "text",
+        phone_number_id: str = None,
+        access_token: str = None
+    ) -> bool:
+        """
+        Send a message via WhatsApp Business API
+        This is the method called by the scheduled message worker
+        """
+        logger.info(f"📤 Sending {message_type} message to {to}")
+        
+        # Format phone number (remove any spaces/special characters)
+        to_number = ''.join(filter(str.isdigit, to))
+        
+        # For scheduled messages, you might need to get phone_number_id and access_token from database
+        # For now, using parameters or environment variables
+        if not phone_number_id or not access_token:
+            # Try to get from environment or database
+            # You might want to modify this based on your setup
+            from database.session import SessionLocal
+            from database.models import WhatsAppAccount
+            
+            db = SessionLocal()
+            try:
+                # Get the first active WhatsApp account
+                # In production, you might want to get tenant-specific account
+                whatsapp_account = db.query(WhatsAppAccount).filter(
+                    WhatsAppAccount.is_active == True
+                ).first()
+                
+                if whatsapp_account:
+                    phone_number_id = whatsapp_account.phone_number_id
+                    access_token = whatsapp_account.access_token
+                else:
+                    logger.error("❌ No active WhatsApp account found")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to get WhatsApp account: {e}")
+                return False
+            finally:
+                db.close()
+        
+        if message_type == "text":
+            return await self.send_text_message(phone_number_id, access_token, to_number, message)
+        else:
+            # For other message types, use text as fallback
+            logger.warning(f"⚠️ Message type '{message_type}' not fully implemented, using text")
+            return await self.send_text_message(phone_number_id, access_token, to_number, message)
+    
     async def send_text_message(
         self, 
         phone_number_id: str,
         access_token: str,
         to_number: str, 
         message: str
-    ) -> Dict[str, Any]:
+    ) -> bool:
         """
         Send a text message via WhatsApp Business API
+        Returns: bool (success status)
         """
-        logger.info(f"📤 Sending message to {to_number}")
-        
-        # Format phone number (remove any spaces/special characters)
-        to_number = ''.join(filter(str.isdigit, to_number))
+        logger.info(f"💬 Sending text message to {to_number}")
         
         # Prepare the message payload
         payload = {
@@ -47,35 +99,29 @@ class WhatsAppService:
         
         try:
             logger.info(f"🔗 Calling WhatsApp API: {url}")
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            
+            # Use async HTTP client in production (aiohttp)
+            # For now using requests with async wrapper
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: requests.post(url, json=payload, headers=headers, timeout=30)
+            )
             
             if response.status_code == 200:
                 result = response.json()
                 message_id = result.get("messages", [{}])[0].get("id")
                 logger.success(f"✅ Message sent successfully! ID: {message_id}")
-                return {
-                    "success": True,
-                    "message_id": message_id,
-                    "wamid": message_id,
-                    "status": "sent"
-                }
+                return True
             else:
                 error_msg = f"WhatsApp API error: {response.status_code} - {response.text}"
                 logger.error(f"❌ {error_msg}")
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "status": "failed"
-                }
+                return False
                 
         except Exception as e:
             error_msg = f"Failed to send message: {str(e)}"
             logger.error(f"❌ {error_msg}")
-            return {
-                "success": False,
-                "error": error_msg,
-                "status": "failed"
-            }
+            return False
     
     async def send_template_message(
         self,
@@ -84,9 +130,10 @@ class WhatsAppService:
         to_number: str,
         template_name: str,
         language_code: str = "en"
-    ) -> Dict[str, Any]:
+    ) -> bool:
         """
         Send a template message (for approved templates)
+        Returns: bool (success status)
         """
         logger.info(f"📤 Sending template '{template_name}' to {to_number}")
         
@@ -112,28 +159,22 @@ class WhatsAppService:
         url = f"{self.base_url}/{phone_number_id}/messages"
         
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.post(url, json=payload, headers=headers, timeout=30)
+            )
             response.raise_for_status()
             
             result = response.json()
             message_id = result.get("messages", [{}])[0].get("id")
             logger.success(f"✅ Template message sent! ID: {message_id}")
-            
-            return {
-                "success": True,
-                "message_id": message_id,
-                "wamid": message_id,
-                "status": "sent"
-            }
+            return True
             
         except Exception as e:
             error_msg = f"Failed to send template: {str(e)}"
             logger.error(f"❌ {error_msg}")
-            return {
-                "success": False,
-                "error": error_msg,
-                "status": "failed"
-            }
+            return False
     
     async def mark_message_as_read(
         self,
@@ -157,7 +198,12 @@ class WhatsAppService:
             }
             
             url = f"{self.base_url}/{phone_number_id}/messages"
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.post(url, json=payload, headers=headers, timeout=10)
+            )
             response.raise_for_status()
             
             logger.info(f"✅ Message {message_id} marked as read")

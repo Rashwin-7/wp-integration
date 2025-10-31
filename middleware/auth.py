@@ -10,13 +10,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class HMACAuth(BaseHTTPMiddleware):  # ✅ EXTEND BaseHTTPMiddleware
+class HMACAuth(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Skip auth for public routes
         public_paths = [
             '/docs', '/redoc', '/openapi.json', 
             '/webhook', '/api/v1/tenants/register', 
-            '/health', '/', '/test-db'
+            '/health', '/', '/test-db',
+            '/tenants/', 
+            '/api/v1/me' 
         ]
         
         if any(request.url.path == path or request.url.path.startswith(path) for path in public_paths):
@@ -53,11 +55,15 @@ class HMACAuth(BaseHTTPMiddleware):  # ✅ EXTEND BaseHTTPMiddleware
                 await self.log_api_call(db, None, request, 401, start_time, "Invalid client ID")
                 raise HTTPException(status_code=401, detail="Invalid client ID")
             
-            # Get request body
-            body = await request.body()
-            body_str = body.decode() if body else ""
+            # ✅ FIX: Store the body bytes for signature verification
+            body_bytes = await request.body()
+            
+            # ✅ CRITICAL FIX: Re-create the request with the body for downstream use
+            async def receive():
+                return {'type': 'http.request', 'body': body_bytes, 'more_body': False}
             
             # Verify HMAC signature
+            body_str = body_bytes.decode() if body_bytes else ""
             message = f"{timestamp}.{body_str}"
             expected_signature = hmac.new(
                 key=tenant.hmac_secret.encode('utf-8'),
@@ -76,12 +82,15 @@ class HMACAuth(BaseHTTPMiddleware):  # ✅ EXTEND BaseHTTPMiddleware
             response_time = int((time.time() - start_time) * 1000)
             await self.log_api_call(db, tenant.id, request, 200, response_time)
             
-            # Continue to the next middleware/route
-            response = await call_next(request)
+            # ✅ FIX: Create a new request with the original body
+            from starlette.requests import Request
+            new_request = Request(request.scope, receive)
+            
+            # Continue to the next middleware/route with the restored request
+            response = await call_next(new_request)
             return response
             
         except HTTPException as e:
-            # Return HTTPException as response
             return Response(
                 content={"detail": e.detail},
                 status_code=e.status_code,
